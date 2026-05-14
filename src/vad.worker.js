@@ -39,9 +39,17 @@ const NEW_BUFFER_SIZE      = 512;
 const MAX_NUM_PREV_BUFFERS = Math.ceil(SPEECH_PAD_SAMPLES / NEW_BUFFER_SIZE);
 
 // Eager partial — emit partial transcript after this much continuous speech.
-const EAGER_PARTIAL_MS      = 1000;
+//
+// Each partial re-transcribes the WHOLE accumulated buffer (not just the
+// new audio since the last partial), so a cadence of 1 s on a 4 s
+// utterance means Whisper runs 4 times on increasingly long audio.
+// Whisper Base on WASM is roughly 1–2 s per call, so the queue piles up
+// and the user perceives lag. 1800 ms + max 2 partials gives a "halfway
+// + final" cadence that keeps perceived latency low without saturating
+// the worker. The optimistic-creep ticker in app.js covers the gaps.
+const EAGER_PARTIAL_MS      = 1800;
 const EAGER_PARTIAL_SAMPLES = EAGER_PARTIAL_MS * (SAMPLE_RATE / 1000);
-const MAX_PARTIAL_EMITS     = 4;
+const MAX_PARTIAL_EMITS     = 2;
 
 // ── Load Silero VAD ──────────────────────────────────────────────────────────
 let silero_vad;

@@ -17,7 +17,19 @@ import {
 // Language and task hints passed on every transcription call. Whisper is
 // multilingual; without these it would language-detect each segment, which
 // is slower and less reliable for short utterances.
-const ASR_OPTIONS = { language: 'french', task: 'transcribe' };
+//
+// no_repeat_ngram_size + temperature:0 + condition_on_prev_tokens:false
+// together prevent Whisper's classic decoder-loop hallucination, where on
+// ambiguous or short audio it gets stuck producing "par les par les par
+// les..." or similar n-gram repeats. Without these, French in particular
+// triggers the loop frequently because of dense function-word sequences.
+const ASR_OPTIONS = {
+  language: 'french',
+  task: 'transcribe',
+  no_repeat_ngram_size: 3,
+  temperature: 0,
+  condition_on_prev_tokens: false,
+};
 
 // ── Device detection ─────────────────────────────────────────────────────────
 async function supportsWebGPU() {
