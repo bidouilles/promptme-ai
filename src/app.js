@@ -1,7 +1,8 @@
 /**
  * Teleprompter — Main App (v6)
  *
- * Speech engine: Moonshine Base ONNX (Transformers.js v3) via Web Worker
+ * Speech engine: Whisper tiny multilingual ONNX (Transformers.js v3) via
+ * Web Worker, with a French language hint set in transcribe.worker.js.
  *
  * ═══════════════════════════════════════════════════════
  *  V6 SPEED OPTIMIZATIONS
@@ -27,8 +28,8 @@
  *   8. Optimistic word creep — while waiting for next transcript, smoothly
  *      advance the highlight by ~1 word/sec based on measured WPM. Snaps
  *      back to transcript-confirmed position on each new result. Creates the
- *      perception of real-time tracking even during ~600ms Moonshine gaps.
- *   9. Interim transcript display — show Moonshine's partial signal (the
+ *      perception of real-time tracking even during ~600ms Whisper gaps.
+ *   9. Interim transcript display — show Whisper's partial signal (the
  *      "Listening" state) as a subtle animated indicator so user sees the
  *      model is working.
  *  10. Scroll momentum easing — use spring-style CSS transition (0.15s ease)
@@ -55,50 +56,124 @@ import { doubleMetaphone } from 'https://cdn.jsdelivr.net/npm/double-metaphone/+
 // SAMPLE SCRIPT
 // ═══════════════════════════════════════════════════════
 
-const SAMPLE_SCRIPT = `Welcome to this virtual teleprompter.
+const SAMPLE_SCRIPT = `Bienvenue sur ce téléprompteur virtuel.
 
-As you speak, the script will automatically scroll to keep up with your words. Each word you say is highlighted in real time, so you always know exactly where you are in your script.
+Au fur et à mesure que vous parlez, le script défile automatiquement pour suivre votre voix. Chaque mot prononcé est mis en évidence en temps réel, afin que vous sachiez toujours exactement où vous en êtes.
 
-This teleprompter uses an embedded AI voice model that runs entirely in your browser. No data leaves your device, and no internet connection is required after the first load.
+Ce téléprompteur utilise un modèle de reconnaissance vocale embarqué qui s'exécute entièrement dans votre navigateur. Aucune donnée ne quitte votre appareil, et aucune connexion Internet n'est nécessaire après le premier chargement.
 
-To get started, press Start Speaking. The microphone will listen to your voice and track your progress through the script automatically.
+Pour commencer, appuyez sur Start Speaking. Le microphone écoute votre voix et suit votre progression dans le script automatiquement.
 
-You can adjust the font size using the controls. Mirror mode flips the display horizontally for use with a physical teleprompter mirror rig.
+Vous pouvez ajuster la taille de la police à l'aide des contrôles. Le mode miroir inverse l'affichage horizontalement pour une utilisation avec un dispositif physique à miroir semi-réfléchissant.
 
-Thank you for using this teleprompter. Good luck with your presentation!`;
+Merci d'utiliser ce téléprompteur. Bonne présentation !`;
 
 // ═══════════════════════════════════════════════════════
-// PHONETIC NORMALISATION — Double Metaphone + ASR overrides
+// PHONETIC NORMALISATION — Double Metaphone + French overrides
 // ═══════════════════════════════════════════════════════
 //
-// Double Metaphone (Lawrence Philips, 2000) maps words to a consonant-cluster
-// code, so true homophones produce the same key automatically:
-//   right / write / rite  → RT
-//   to / two / too        → T
-//   their / there         → TR
-//   peace / piece         → PS  … and thousands more.
+// Double Metaphone (Lawrence Philips, 2000) is English-tuned but still
+// produces a stable consonant-cluster code for any input. As long as both
+// the script and the ASR output go through the same encoder, matching
+// works — even for French words DM has no special rules for.
 //
-// This replaces the hand-rolled PHONETIC_MAP with a principled algorithm
-// that covers the full English homophone space without manual maintenance.
-// Apostrophe-stripping before lookup already collapses contractions:
-//   "you're" → "youre" → same DM code as "your".
+// What DM does NOT catch are *true French homophones* (different words
+// that sound identical to a listener and that ASR therefore swaps freely).
+// French has dozens of these and they appear constantly. ASR_OVERRIDES
+// maps each group of homophones to a single shared key so the matcher
+// treats them as equivalent.
 //
-// ASR_OVERRIDES handles the two cases DM structurally cannot resolve:
-//   a / the  — phonetically distinct; ASR frequently swaps articles
-//   an / and — DM gives 'AN' vs 'ANT'; won't match without help
+// Groups below cover the high-frequency cases:
+//   • Articles: le/les, la, un/une, du/de/des
+//   • [sɛ]:  c'est / ces / ses / s'est / sait / sais
+//   • [ɛ]:   et / est / ait / aie / aies / aient
+//   • [a]:   a / à / as
+//   • [u]:   ou / où
+//   • [se]:  se / ce / ceux
+//   • Verb endings -é/-er/-ais/-ait: ASR often returns the wrong form
+//     of the same verb (parlé vs parler vs parlais). These collapse
+//     algorithmically in suffixRule() below rather than per-word here.
 
 const ASR_OVERRIDES = {
-  'a':   'hw_art', 'the': 'hw_art',
-  'an':  'hw_and', 'and': 'hw_and',
+  // ── [sɛ] family ──
+  "c'est": 'hw_se',  'cest': 'hw_se',
+  'ces':   'hw_se',
+  'ses':   'hw_se',
+  "s'est": 'hw_se',  'sest': 'hw_se',
+  'sait':  'hw_se',  'sais': 'hw_se',
+
+  // ── [ɛ] family — et / est and -ait/-aie verb endings as standalone words ──
+  'et':  'hw_et',
+  'est': 'hw_et',
+  'ait': 'hw_et',
+  'aie': 'hw_et',  'aies': 'hw_et',  'aient': 'hw_et',
+
+  // ── [a] family ──
+  'a':  'hw_a',  'à':  'hw_a',  'as': 'hw_a',
+
+  // ── [u] family ──
+  'ou': 'hw_ou', 'où': 'hw_ou',
+
+  // ── [sə] / [sø] articles & demonstratives ──
+  'se':   'hw_ce',
+  'ce':   'hw_ce',
+  'ceux': 'hw_ce',
+
+  // ── Articles: ASR routinely swaps singular/plural articles ──
+  'le':  'hw_le',  'les': 'hw_le',  'la':  'hw_le',  "l'": 'hw_le',  'l':  'hw_le',
+  'un':  'hw_un',  'une': 'hw_un',
+  'du':  'hw_de',  'de':  'hw_de',  'des': 'hw_de',  "d'": 'hw_de',  'd':  'hw_de',
+
+  // ── Possessives ──
+  'mon': 'hw_mon', 'ma': 'hw_mon', 'mes': 'hw_mon',
+  'ton': 'hw_ton', 'ta': 'hw_ton', 'tes': 'hw_ton',
+  'son': 'hw_son', 'sa': 'hw_son',  // 'ses' already mapped to hw_se
+
+  // ── [sɔ̃] son/sont ──
+  'sont': 'hw_son',
+
+  // ── [mɛ] mais/mes/met/mets ──
+  'mais': 'hw_me',  'met': 'hw_me',  'mets': 'hw_me',
+  // ('mes' is in hw_ton above — slight cross-talk we accept; both groups are
+  //  function words that the locality penalty disambiguates from context.)
+
+  // ── [pø] peu/peut/peux ──
+  'peu':  'hw_peu', 'peut': 'hw_peu', 'peux': 'hw_peu',
+
+  // ── [kɛl] quel/quelle/quels/quelles ──
+  'quel':    'hw_quel', 'quelle':  'hw_quel',
+  'quels':   'hw_quel', 'quelles': 'hw_quel',
 };
+
+// Verb-suffix collapse — French regular verbs have several endings that all
+// sound like [e] or [ɛ] but spell differently:
+//   parler / parlé / parlée / parlés / parlais / parlait / parlaient / parlez
+// Whisper picks whichever it thinks fits the grammar; the script may have
+// a different form. Strip just these [e]/[ɛ] verb endings to a single root
+// so all forms collide to the same DM code.
+//
+// Deliberately narrow:
+//   - Does NOT strip the general plural -s (would cause too many collisions
+//     with short function words: nous/vous/très/etc.)
+//   - Does NOT strip -e alone (would mangle nouns: table → tabl)
+//   - Only fires when ≥4 letters remain after the cut, so short words
+//     (le, des, ses, etc.) are untouched.
+const VERB_SUFFIX_RE = /(?:eraient|erions|eriez|erais|erait|erons|erez|eront|aient|èrent|asses|ions|iez|ais|ait|ant|ées|és|ée|er|ez|é)$/;
+function stripVerbSuffix(w) {
+  const m = w.match(VERB_SUFFIX_RE);
+  if (!m) return w;
+  const root = w.slice(0, w.length - m[0].length);
+  return root.length >= 4 ? root : w;
+}
 
 function normTok(w) {
   const s  = w.toLowerCase().replace(/[^a-z0-9äöüæøåéàèêëîïôùûüç'-]/gi, '').trim();
   const s2 = s.replace(/'/g, '');
   if (ASR_OVERRIDES[s])  return ASR_OVERRIDES[s];
   if (ASR_OVERRIDES[s2]) return ASR_OVERRIDES[s2];
-  const dm = doubleMetaphone(s2 || s);
-  return dm[0] || s2 || s;
+  const stripped = stripVerbSuffix(s2 || s);
+  const dm = doubleMetaphone(stripped);
+  return dm[0] || stripped;
 }
 
 function tokenize(text) {
@@ -110,8 +185,9 @@ function tokenize(text) {
       const c2 = c.replace(/'/g, '');
       if (ASR_OVERRIDES[c])  return ASR_OVERRIDES[c];
       if (ASR_OVERRIDES[c2]) return ASR_OVERRIDES[c2];
-      const dm = doubleMetaphone(c2 || c);
-      return dm[0] || c2 || c;
+      const stripped = stripVerbSuffix(c2 || c);
+      const dm = doubleMetaphone(stripped);
+      return dm[0] || stripped;
     })
     .filter(w => w.length > 0);
 }
@@ -365,7 +441,7 @@ const state = {
 
   settings: { fontSize: 2.5, mirror: false },
   vadWorker: null,    // VAD worker — Silero, runs unblocked at frame rate
-  txWorker:  null,    // Transcription worker — Moonshine, runs concurrently
+  txWorker:  null,    // Transcription worker — Whisper, runs concurrently
   audioContext: null,
   workletNode: null,
   micStream: null,
@@ -596,7 +672,7 @@ function ariaMatch(spokenText) {
   if (spoken.length === 0) return null;
 
   // ── ASR noise reduction ──────────────────────────────────────────
-  // Moonshine Tiny produces two kinds of noise that hurt matching:
+  // Whisper produces two kinds of noise that hurt matching:
   //   1. Stuttered repeats: "or, or, or, or" → inflates token count,
   //      dilutes Levenshtein score against the real script window.
   //   2. Phantom / garbled words: "Hatchner", "Newscapes" → tokens
@@ -752,7 +828,7 @@ function effectiveWpm() {
 // OPTIMISTIC WORD CREEP (UX trick #8)
 // ═══════════════════════════════════════════════════════
 //
-// Between transcript events (which come every ~600-900ms from Moonshine),
+// Between transcript events (which come every ~600-900ms from Whisper),
 // we smoothly advance the highlighted word at the user's measured WPM.
 // This makes the teleprompter feel instant and continuous.
 //
@@ -1434,7 +1510,7 @@ function initWorker() {
         setStatus('idle', 'Model ready');
         state.modelLoading = false; state.modelReady = true;
         if (dom.modelProgress) dom.modelProgress.classList.add('hidden');
-        if (dom.engineIndicator) dom.engineIndicator.textContent = 'Engine: Moonshine AI (on-device)';
+        if (dom.engineIndicator) dom.engineIndicator.textContent = 'Engine: Whisper AI (on-device)';
         if (state._startPending) { state._startPending = false; startAudio(); }
       } else if (status === 'recording') {
         setStatus('recording', 'Listening…');
@@ -1470,7 +1546,7 @@ function initWorker() {
     if (type === 'info') {
       console.log('[Worker]', message);
       if (dom.engineIndicator && message.includes('Device:')) {
-        dom.engineIndicator.textContent = `Engine: Moonshine AI (${message.includes('webgpu') ? 'WebGPU' : 'WASM'})`;
+        dom.engineIndicator.textContent = `Engine: Whisper AI (${message.includes('webgpu') ? 'WebGPU' : 'WASM'})`;
       }
     }
 
@@ -1486,7 +1562,7 @@ function initWorker() {
     state.modelLoading = false;
   };
 
-  // ── VAD worker: Silero only, never blocked by Moonshine ──────────────────
+  // ── VAD worker: Silero only, never blocked by Whisper ───────────────────
   state.vadWorker = new Worker('./vad.worker.js', { type: 'module' });
   state.vadWorker.onmessage = ({ data }) => {
     if (data.type === 'segment') {
@@ -1502,7 +1578,7 @@ function initWorker() {
   };
   state.vadWorker.onerror = handleError;
 
-  // ── Transcription worker: Moonshine only, queues segments ────────────────
+  // ── Transcription worker: Whisper only, queues segments ─────────────────
   state.txWorker = new Worker('./transcribe.worker.js', { type: 'module' });
   state.txWorker.onmessage = handleMessage;
   state.txWorker.onerror   = handleError;
@@ -1510,6 +1586,22 @@ function initWorker() {
 
 async function startAudio() {
   if (state.isRecording) return;
+  // Browsers (especially Safari) only expose navigator.mediaDevices in a
+  // secure context — HTTPS or localhost. Over plain HTTP on a LAN IP the
+  // whole object is undefined, which makes the raw error message
+  // ("undefined is not an object") useless. Detect this case explicitly.
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const origin = window.location.origin;
+    const insecure = window.location.protocol === 'http:' &&
+                     !['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const msg = insecure
+      ? `Microphone needs HTTPS (or localhost). Current origin ${origin} is plain HTTP — Safari will not expose the mic here.`
+      : `Microphone API unavailable in this browser (navigator.mediaDevices missing).`;
+    console.error(msg);
+    setStatus('idle', msg);
+    updateButtons(false);
+    return;
+  }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { sampleRate:16000, channelCount:1, echoCancellation:true, noiseSuppression:true, autoGainControl:true }
@@ -1683,7 +1775,7 @@ function checkEngineAvailability() {
     if (dom.engineIndicator) { dom.engineIndicator.textContent = 'Use a modern browser (Chrome/Safari/Firefox)'; dom.engineIndicator.style.color = 'var(--color-error)'; }
     return false;
   }
-  if (dom.engineIndicator) dom.engineIndicator.textContent = 'Engine: Moonshine AI (loading…)';
+  if (dom.engineIndicator) dom.engineIndicator.textContent = 'Engine: Whisper AI (loading…)';
   return true;
 }
 

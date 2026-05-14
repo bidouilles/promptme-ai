@@ -1,11 +1,11 @@
 /**
- * Transcription Worker — Moonshine only
+ * Transcription Worker — Whisper base (multilingual, French)
  *
  * Receives completed speech segments from the VAD worker (relayed via
- * main thread). Runs Moonshine inference and posts transcripts back to
- * the main thread.
+ * main thread). Runs Whisper inference with a French language hint and
+ * posts transcripts back to the main thread.
  *
- * Completely decoupled from VAD: Moonshine's 300–600 ms inference never
+ * Completely decoupled from VAD: Whisper's 500 ms–1.2 s inference never
  * delays speech boundary detection. Segments that arrive while a previous
  * inference is running are queued and processed in order.
  */
@@ -13,6 +13,11 @@
 import {
   pipeline,
 } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js';
+
+// Language and task hints passed on every transcription call. Whisper is
+// multilingual; without these it would language-detect each segment, which
+// is slower and less reliable for short utterances.
+const ASR_OPTIONS = { language: 'french', task: 'transcribe' };
 
 // ── Device detection ─────────────────────────────────────────────────────────
 async function supportsWebGPU() {
@@ -30,12 +35,16 @@ const DTYPE_CONFIGS = {
   wasm:   { encoder_model: 'fp32', decoder_model_merged: 'q8' },
 };
 
-// ── Load Moonshine ────────────────────────────────────────────────────────────
+// ── Load Whisper base (multilingual) ─────────────────────────────────────────
+// Tiny was too weak for French — frequent homophone/word swaps even on clear
+// audio. Base is ~2× the download and ~2× inference, but noticeably more
+// accurate; the optimistic-creep layer in app.js hides most of the added
+// latency so reading still feels real-time.
 let transcriber;
 try {
   transcriber = await pipeline(
     'automatic-speech-recognition',
-    'onnx-community/moonshine-tiny-ONNX',
+    'onnx-community/whisper-base',
     {
       device, dtype: DTYPE_CONFIGS[device],
       progress_callback: (progress) => {
@@ -48,12 +57,12 @@ try {
     },
   );
 } catch (err) {
-  self.postMessage({ type: 'error', message: `Failed to load Moonshine: ${err.message}` });
+  self.postMessage({ type: 'error', message: `Failed to load Whisper: ${err.message}` });
   throw err;
 }
 
 // Warm up — compile shaders / JIT with a silent buffer
-await transcriber(new Float32Array(16000));
+await transcriber(new Float32Array(16000), ASR_OPTIONS);
 self.postMessage({ type: 'status', status: 'ready', message: 'Ready' });
 
 // ── Smart partial handling ────────────────────────────────────────────────────
@@ -67,7 +76,7 @@ let _latestPartial = null;   // newest partial buffer, replaces any pending one
 async function transcribeAndEmit(buffer, isFinal, vadEmitTs, audioMs) {
   const txStartTs = performance.now();
   self.postMessage({ type: 'status', status: 'transcribing', message: 'Transcribing…' });
-  const { text } = await transcriber(buffer);
+  const { text } = await transcriber(buffer, ASR_OPTIONS);
   const txEndTs = performance.now();
   const cleaned = text.trim();
   if (cleaned) self.postMessage({ type: 'transcript', text: cleaned, isFinal, vadEmitTs, audioMs, txStartTs, txEndTs, txDurMs: Math.round(txEndTs - txStartTs) });

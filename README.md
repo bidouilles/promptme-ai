@@ -6,7 +6,7 @@ This one does the opposite: it listens to your voice and tracks your position in
 
 Everything runs **entirely inside the browser** – speech recognition, fuzzy matching, and scrolling. No backend, no accounts, no audio leaving the tab.
 
-:sparkles: **[Try it online](https://larsbaunwall.github.io/promptme-ai)**
+:sparkles: **[Try it online](https://bidouilles.github.io/promptme-ai)**
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="screenshot-dark.png">

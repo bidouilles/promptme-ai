@@ -4,9 +4,9 @@
  * Receives raw PCM buffers from the AudioWorklet (via main thread).
  * Detects speech segments using Silero VAD.
  * Posts completed speech segments to the main thread, which relays
- * them to the transcription worker — completely decoupled from Moonshine.
+ * them to the transcription worker — completely decoupled from Whisper.
  *
- * KEY BENEFIT: Moonshine's 300–600 ms inference no longer stalls VAD.
+ * KEY BENEFIT: Whisper's 300–600 ms inference no longer stalls VAD.
  * Every 32 ms audio frame is processed in real time, so:
  *   - Speech START is detected immediately (no queued backlog)
  *   - Silence / utterance END is detected immediately
@@ -22,8 +22,8 @@ import {
 //
 // IMPORTANT: MIN_SILENCE_MS is higher here (500ms) than the original
 // single-worker (300ms), because in the original architecture VAD was
-// blocked behind Moonshine inference (~300–600ms). That accidental delay
-// meant utterances were effectively 600–900ms longer, giving Moonshine
+// blocked behind Whisper inference (~300–600ms). That accidental delay
+// meant utterances were effectively 600–900ms longer, giving Whisper
 // more context and better transcripts. Now that VAD runs unblocked,
 // a true 300ms silence causes premature flushes with too-short audio.
 // 500ms compensates for the lost "free" buffering.
@@ -70,7 +70,7 @@ let partialEmitCount  = 0;
 let partialEmitLast   = 0;
 
 // Own inference chain — only Silero runs here so it's fast (~5 ms/frame)
-// and never competes with Moonshine.
+// and never competes with Whisper.
 let vadChain = Promise.resolve();
 
 const _INV_CHUNK_LEN          = 1 / NEW_BUFFER_SIZE;
