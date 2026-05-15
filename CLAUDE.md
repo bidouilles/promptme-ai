@@ -4,26 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Browser-based teleprompter that listens to your voice and tracks position in the script in real time. **No build step, no backend, no framework** — vanilla JS + CSS served as static files from `src/`.
+Browser-based **French-language** teleprompter that listens to your voice and tracks position in the script in real time. Fork of `larsbaunwall/promptme-ai` adapted for French presentations — model, matcher, sample script, and UI all localised. **No build step, no backend, no framework** — vanilla JS + CSS served as static files from `src/`.
+
+Live deploy: `https://bidouilles.github.io/promptme-ai/` (Pages on push to `main`).
 
 ## Running locally
 
-The app needs cross-origin isolation (for `SharedArrayBuffer` used by Transformers.js). `src/coi-serviceworker.js` installs the required COOP/COEP headers, so any static server works:
+The app needs cross-origin isolation (for `SharedArrayBuffer` used by Transformers.js when the Whisper engine is active). `src/coi-serviceworker.js` installs the required COOP/COEP headers, so any static server works:
 
 ```bash
 cd src
 python3 -m http.server 8080      # or: npx serve .
 ```
 
-Open `http://localhost:8080`. The Whisper base model (~150 MB) is fetched on first run and cached; after that the app works offline. (Tiny was tried first and was too weak for French — recurring homophone/word swaps even on clean audio. Base is the smallest size that gave acceptable accuracy.)
+Open `http://localhost:8080`. On Safari/Chromium the page boots without any model download (Web Speech engine — see below). On Firefox or after the user flips the offline toggle, the Whisper base model (~150 MB) is fetched on first run and cached; after that Whisper also works offline.
 
-**Language:** the app is configured for **French** speech. The language hint lives in `src/transcribe.worker.js` as `ASR_OPTIONS = { language: 'french', task: 'transcribe' }` and is passed on both warm-up and every transcription call. The matcher's homophone collapse tables (`ASR_OVERRIDES` and `stripVerbSuffix` in `src/app.js`) are also French-specific — see "Script-matching algorithm" below.
+**HTTPS / mic access:** `getUserMedia` and Web Speech only work from a secure context (`https://`, `localhost`, or `127.0.0.1`). On iPad accessed over a LAN IP (`http://192.168.x.y:8080/`), Safari does not expose `navigator.mediaDevices` at all — the app detects this and surfaces a French message explaining the cause rather than the raw "undefined is not an object". For iPad testing use mkcert + an HTTPS dev server, ngrok, or the GitHub Pages URL.
 
 ## Deployment
 
 `.github/workflows/deploy.yml` publishes `./src` to GitHub Pages on push to `main`. There is no test/lint pipeline — the only CI is the Pages deploy.
 
 ## Architecture
+
+There are **two interchangeable speech engines**. They share the same downstream code path (matcher + scroll/highlight), differing only in how transcripts are produced. Active engine lives in `state.engine` ∈ `{'web-speech', 'whisper'}`, persisted to `localStorage` under `promptme.engine`. The user-facing toggle is **"Reconnaissance hors ligne"** in the Controls panel — only rendered when Web Speech is available on the browser.
+
+### Engine 1 — Web Speech (default on Safari/iPad/Chromium)
+
+```
+SpeechRecognition (lang='fr-FR', continuous, interimResults)
+   → app.js: onresult handler concatenates new entries since resultIndex
+   → appendTranscript() + processTranscript()  (same matcher path as Whisper)
+```
+
+- No model download, no Workers, no AudioWorklet. The browser handles capture + ASR natively; on iOS this is Apple's Speech framework.
+- iOS auto-stops the recognizer after ~60 s of silence; the `onend` handler restarts as long as `state._wsRestart` is true. Don't touch this without testing on a real iPad.
+- Audio may transit Apple/Google servers depending on browser + OS version — the engine indicator surfaces this in French.
+- Implemented in `app.js`: `initWebSpeech()`, `startWebSpeech()`, `stopWebSpeech()`.
+
+### Engine 2 — Whisper (fallback + offline mode)
 
 Three-thread pipeline. Each piece exists for a specific latency reason; do not collapse them.
 
@@ -34,12 +53,14 @@ AudioWorklet (16 kHz PCM, 512 samples)
    → app.js main thread    (script matcher + scroll/highlight UI)
 ```
 
-- **`src/app.js`** (~1700 lines, single file) — UI, audio capture, script tokenization/indexing, fuzzy matcher, scroll/highlight rendering, and the optimistic-creep ticker.
-- **`src/vad.worker.js`** — Silero VAD only. Detects speech-segment boundaries and posts completed segments to the main thread.
-- **`src/transcribe.worker.js`** — Whisper ASR only (`onnx-community/whisper-base`, multilingual, called with a French language hint). Receives segments relayed from the main thread; transcripts return as `{type:'transcript', text, isFinal}`.
-- **`src/whisper.worker.js`** — **Legacy / unused.** The earlier single-worker design that combined VAD + the original Moonshine ASR. Kept for reference but not loaded by `app.js`. Decoupling VAD from ASR is the whole point of the current split — Whisper's 300–800 ms inference no longer delays speech-boundary detection.
+- **`src/vad.worker.js`** — Silero VAD only. Detects speech-segment boundaries and posts completed segments to the main thread. Emits partials every **1800 ms** (max **2** per utterance) — relaxed from the original 1000 ms × 4 because each partial re-transcribes the whole accumulated buffer, so frequent partials saturate the worker on WASM.
+- **`src/transcribe.worker.js`** — Whisper ASR only (`onnx-community/whisper-base`, multilingual, called with a French language hint). The call options also pass `no_repeat_ngram_size: 3`, `temperature: 0`, `condition_on_prev_tokens: false` — without these, Whisper's greedy decoder loops on French function-word sequences (a single `"vous parlez"` decoded as `"vous par les par les par les..."`). Treat all three flags as load-bearing.
+- **`src/whisper.worker.js`** — **Legacy / unused.** Earlier single-worker design that combined VAD + the original Moonshine ASR. Kept for reference but not loaded by `app.js`.
 
-The two workers and the main thread are wired in `app.js` around lines 1489–1506.
+### Common
+- **`src/app.js`** (~1900 lines, single file) — UI, audio capture, script tokenization/indexing, fuzzy matcher, scroll/highlight rendering, optimistic-creep ticker, and the two engine implementations.
+- Whisper workers are **not** pre-loaded at boot when Web Speech is the active engine — saves the 150 MB download on iPad. They lazy-init the first time the user flips the offline toggle (`setEngine('whisper')` → `initWorker()`).
+- Whisper status handlers in the message-passing layer are gated on `if (state.engine === 'whisper')` — without this guard, a background worker can overwrite the Apple Speech engine label after the user has switched.
 
 ## Script-matching algorithm
 
@@ -59,3 +80,5 @@ The hard problem is mapping noisy ~600 ms ASR batches back to a script position.
 - Workers are also ES modules (`new Worker(url, { type: 'module' })`) and import Transformers.js from the same CDN.
 - The Transformers.js version is pinned in URL strings (currently `@huggingface/transformers@3.8.1`) — bump it in **all three** worker files together.
 - Inference backend auto-detects: WebGPU if `navigator.gpu.requestAdapter()` succeeds, otherwise WASM. `DTYPE_CONFIGS` in `transcribe.worker.js` differs by backend (q4 for WebGPU, q8 for WASM) — keep both paths working when changing the model.
+- **All user-visible strings are in French** — including engine indicator, status badge, error messages, button labels, ARIA labels, the `<title>`, and `<html lang="fr">`. Console logs and `_mlog()` metric keys stay English (developer-facing). When adding new UI strings, follow suit; when adding new status/error states, remember they may be forwarded from a worker via `{ type: 'status', message: '…' }` and are displayed verbatim.
+- WPM is displayed in the UI as **MPM** (mots par minute). Internal variable names (`wpm`, `WPM_DEFAULT`, etc.) stayed English.
