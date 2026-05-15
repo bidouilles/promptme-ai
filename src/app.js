@@ -501,7 +501,7 @@ function copyMetricsLog() {
   };
   const json = JSON.stringify(payload);
   navigator.clipboard.writeText(json).then(
-    () => setStatus('idle', `Metrics copied (${_metricsLog.length} events, ${(json.length / 1024).toFixed(0)} KB)`),
+    () => setStatus('idle', `Métriques copiées (${_metricsLog.length} évén., ${(json.length / 1024).toFixed(0)} Ko)`),
     () => {
       // Fallback: open in new tab
       const blob = new Blob([json], { type: 'application/json' });
@@ -617,7 +617,7 @@ function parseScript(text) {
 function renderScript() {
   const text = dom.scriptInput.value.trim();
   if (!text) {
-    dom.teleprompterContent.innerHTML = '<div class="empty-state"><div class="empty-state-arrow">←</div><p class="empty-state-title">Your script lives here</p><p class="empty-state-sub">Paste it in the panel to the left,<br>then press <em>Start Speaking</em></p></div>';
+    dom.teleprompterContent.innerHTML = '<div class="empty-state"><div class="empty-state-arrow">←</div><p class="empty-state-title">Votre script s\'affichera ici</p><p class="empty-state-sub">Collez-le dans le panneau de gauche,<br>puis appuyez sur <em>Démarrer</em></p></div>';
     state.paragraphs = []; state.words = []; state.wordCount = 0;
     state.scriptNormTokens = []; state.tokenIndex = null;
     _spanCache = [];
@@ -1263,7 +1263,7 @@ function triggerParaComplete() {
 
 function advancePara() {
   const next = state.currentParaIndex + 1;
-  if (next >= state.paragraphs.length) { setStatus('stopped','Script complete!'); return; }
+  if (next >= state.paragraphs.length) { setStatus('stopped','Script terminé !'); return; }
 
   state.currentParaIndex   = next;
   state.accumulatedText    = '';
@@ -1413,7 +1413,7 @@ function updateProgress() {
     return;
   }
   const pct = Math.min(100, Math.round((state.currentWordIndex / state.wordCount) * 100));
-  if (dom.progressValue) dom.progressValue.textContent = `${pct}%`;
+  if (dom.progressValue) dom.progressValue.textContent = `${pct} %`;
 
   // Estimated time remaining based on current reading speed
   if (dom.etaValue) {
@@ -1426,8 +1426,8 @@ function updateProgress() {
       const mins = Math.floor(totalSec / 60);
       const secs = totalSec % 60;
       dom.etaValue.textContent = mins > 0
-        ? `${mins}m ${secs}s left`
-        : `${secs}s left`;
+        ? `${mins} min ${secs} s restant`
+        : `${secs} s restant`;
     }
   }
 }
@@ -1504,18 +1504,18 @@ function initWorker() {
 
     if (type === 'status') {
       if (status === 'loading') {
-        setStatus('loading', message || 'Loading AI model…');
+        setStatus('loading', message || 'Chargement du modèle IA…');
         state.modelLoading = true; state.modelReady = false;
       } else if (status === 'ready') {
-        setStatus('idle', 'Model ready');
+        setStatus('idle', 'Modèle prêt');
         state.modelLoading = false; state.modelReady = true;
         if (dom.modelProgress) dom.modelProgress.classList.add('hidden');
-        if (dom.engineIndicator) dom.engineIndicator.textContent = 'Engine: Whisper AI (on-device)';
+        if (dom.engineIndicator) dom.engineIndicator.textContent = 'Moteur : Whisper AI (sur l\'appareil)';
         if (state._startPending) { state._startPending = false; startAudio(); }
       } else if (status === 'recording') {
-        setStatus('recording', 'Listening…');
+        setStatus('recording', 'À l\'écoute…');
       } else if (status === 'transcribing') {
-        setStatus('loading', 'Transcribing…');
+        setStatus('loading', 'Transcription…');
       }
     }
 
@@ -1546,19 +1546,19 @@ function initWorker() {
     if (type === 'info') {
       console.log('[Worker]', message);
       if (dom.engineIndicator && message.includes('Device:')) {
-        dom.engineIndicator.textContent = `Engine: Whisper AI (${message.includes('webgpu') ? 'WebGPU' : 'WASM'})`;
+        dom.engineIndicator.textContent = `Moteur : Whisper AI (${message.includes('webgpu') ? 'WebGPU' : 'WASM'})`;
       }
     }
 
     if (type === 'error') {
-      setStatus('idle', `Model error: ${message}`);
+      setStatus('idle', `Erreur du modèle : ${message}`);
       state.modelLoading = false;
     }
   };
 
   const handleError = err => {
     console.error('Worker error:', err);
-    setStatus('idle', 'Model failed to load');
+    setStatus('idle', 'Échec du chargement du modèle');
     state.modelLoading = false;
   };
 
@@ -1595,8 +1595,8 @@ async function startAudio() {
     const insecure = window.location.protocol === 'http:' &&
                      !['localhost', '127.0.0.1'].includes(window.location.hostname);
     const msg = insecure
-      ? `Microphone needs HTTPS (or localhost). Current origin ${origin} is plain HTTP — Safari will not expose the mic here.`
-      : `Microphone API unavailable in this browser (navigator.mediaDevices missing).`;
+      ? `Le microphone nécessite HTTPS (ou localhost). Origine actuelle : ${origin} en HTTP simple — Safari n'expose pas le micro ici.`
+      : `API microphone indisponible dans ce navigateur (navigator.mediaDevices manquant).`;
     console.error(msg);
     setStatus('idle', msg);
     updateButtons(false);
@@ -1627,7 +1627,7 @@ async function startAudio() {
     state.lastAdvanceTime = Date.now();
     if (!state.sessionStartTime) state.sessionStartTime = Date.now();
 
-    setStatus('recording', 'Listening…');
+    setStatus('recording', 'À l\'écoute…');
     updateButtons(true);
 
     // Kick off creep and stall nudge
@@ -1635,7 +1635,7 @@ async function startAudio() {
     scheduleStallNudge();
   } catch (err) {
     console.error('Audio error:', err);
-    setStatus('idle', `Mic error: ${err.message}`);
+    setStatus('idle', `Erreur micro : ${err.message}`);
     updateButtons(false);
   }
 }
@@ -1648,7 +1648,7 @@ function stopAudio() {
   if (state.stallNudgeTimer) { clearTimeout(state.stallNudgeTimer); state.stallNudgeTimer = null; }
   state.isRecording = false;
   if (dom.interimBox) dom.interimBox.textContent = '';
-  setStatus('stopped', 'Stopped');
+  setStatus('stopped', 'Arrêté');
   updateButtons(false);
 }
 
@@ -1659,7 +1659,7 @@ function stopAudio() {
 function startRecording() {
   if (!state.words.length) { dom.scriptInput.value = SAMPLE_SCRIPT; renderScript(); }
   if (!state.vadWorker) initWorker();
-  if (!state.modelReady) { state._startPending = true; setStatus('loading','Loading AI model…'); updateButtons(true); return; }
+  if (!state.modelReady) { state._startPending = true; setStatus('loading','Chargement du modèle IA…'); updateButtons(true); return; }
   if (!_metricsT0) _metricsT0 = performance.now();
   _mlog('start', { wordCount: state.wordCount, wpmSlider: dom.wpmRange ? Number(dom.wpmRange.value) : CFG.WPM_DEFAULT });
   startAudio();
@@ -1737,7 +1737,7 @@ function wireEvents() {
   dom.clearScriptBtn?.addEventListener('click', () => { dom.scriptInput.value = ''; renderScript(); });
   dom.sampleScriptBtn?.addEventListener('click', () => { dom.scriptInput.value = SAMPLE_SCRIPT; renderScript(); });
   dom.clearTranscriptBtn?.addEventListener('click', () => {
-    dom.transcriptBox.innerHTML = '<span class="transcript-placeholder">Transcript will appear here as you speak…</span>';
+    dom.transcriptBox.innerHTML = '<span class="transcript-placeholder">La transcription apparaîtra ici au fur et à mesure…</span>';
     if (dom.interimBox) dom.interimBox.textContent = '';
   });
   dom.startBtn.addEventListener('click', startRecording);
@@ -1770,12 +1770,12 @@ function wireEvents() {
 
 function checkEngineAvailability() {
   if (typeof Worker === 'undefined' || (typeof AudioContext === 'undefined' && typeof webkitAudioContext === 'undefined')) {
-    setStatus('idle','Browser not supported');
+    setStatus('idle','Navigateur non pris en charge');
     if (dom.startBtn) dom.startBtn.disabled = true;
-    if (dom.engineIndicator) { dom.engineIndicator.textContent = 'Use a modern browser (Chrome/Safari/Firefox)'; dom.engineIndicator.style.color = 'var(--color-error)'; }
+    if (dom.engineIndicator) { dom.engineIndicator.textContent = 'Utilisez un navigateur récent (Chrome/Safari/Firefox)'; dom.engineIndicator.style.color = 'var(--color-error)'; }
     return false;
   }
-  if (dom.engineIndicator) dom.engineIndicator.textContent = 'Engine: Whisper AI (loading…)';
+  if (dom.engineIndicator) dom.engineIndicator.textContent = 'Moteur : Whisper AI (chargement…)';
   return true;
 }
 

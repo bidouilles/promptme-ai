@@ -1,12 +1,14 @@
 # A teleprompter that listens to you
 
+> 🇫🇷 **French adaptation — preview.** This is a fork of [larsbaunwall/promptme-ai](https://github.com/larsbaunwall/promptme-ai) adapted for **French-speaking presentations**. The ASR model is swapped from Moonshine (English-only) to Whisper Base multilingual with a French language hint, the script matcher is extended with French homophone collapsing (c'est/ces/ses, et/est, le/les/la, du/de/des, peu/peut/peux, …) and verb-suffix folding (parler/parlé/parlais/parlait → same root), and the UI is translated. Treat as a preview — feedback welcome.
+
 Most teleprompters scroll at a fixed speed and expect you to keep up.
 
 This one does the opposite: it listens to your voice and tracks your position in the script in real time. If you pause it waits. If you skip a line it finds its way back.
 
 Everything runs **entirely inside the browser** – speech recognition, fuzzy matching, and scrolling. No backend, no accounts, no audio leaving the tab.
 
-:sparkles: **[Try it online](https://bidouilles.github.io/promptme-ai)**
+:sparkles: **[Essayez en ligne](https://bidouilles.github.io/promptme-ai)** (French build) · [Original English version](https://larsbaunwall.github.io/promptme-ai)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="screenshot-dark.png">
@@ -133,12 +135,12 @@ Open `http://localhost:8080`.
 
 | Layer | Technology |
 | --- | --- |
-| Speech model | Moonshine Tiny ONNX (UsefulSensors) |
+| Speech model | Whisper Base ONNX (multilingual, French hint) — *upstream uses Moonshine Tiny (English)* |
 | ML runtime | Transformers.js v3 (Hugging Face) |
 | VAD | Silero VAD ONNX |
 | Inference backend | WebGPU / WASM (auto-detected) |
-| Phonetic encoding | Double Metaphone (`words/double-metaphone`) |
-| UI | Vanilla JS + CSS, no framework |
+| Phonetic encoding | Double Metaphone + French homophone overrides + verb-suffix folding |
+| UI | Vanilla JS + CSS, no framework (French strings) |
 
 ---
 

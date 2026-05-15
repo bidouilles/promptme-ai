@@ -1,13 +1,13 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="fr" data-theme="dark">
 <head>
 <meta name="author" content="Lars Baunwall">
 <meta property="og:see_also" content="https://thinkability.dk">
 <link rel="author" href="https://thinkability.dk">
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Prompt Me! — A teleprompter that scrolls as you speak</title>
-<meta name="description" content="Browser-based virtual teleprompter with embedded Whisper AI speech recognition (French). 100% on-device, no backend.">
+<title>Prompt Me ! — Un téléprompteur qui défile pendant que vous parlez</title>
+<meta name="description" content="Téléprompteur virtuel dans le navigateur avec reconnaissance vocale Whisper AI intégrée (français). 100 % local, sans serveur.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -20,7 +20,7 @@
 <!-- ══ HEADER ══════════════════════════════════════════ -->
 <header class="app-header">
   <div class="header-left">
-    <svg class="logo" aria-label="Teleprompter" viewBox="0 0 36 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg class="logo" aria-label="Téléprompteur" viewBox="0 0 36 28" fill="none" xmlns="http://www.w3.org/2000/svg">
       <rect x="1" y="1" width="34" height="22" rx="3" stroke="currentColor" stroke-width="2"/>
       <path d="M6 8h16M6 13h12M6 18h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
       <circle cx="26" cy="13" r="4" stroke="var(--color-accent)" stroke-width="2"/>
@@ -34,21 +34,21 @@
   <div class="header-center">
     <div id="statusBadge" class="status-badge status-idle">
       <span class="status-dot"></span>
-      <span id="statusText">Ready</span>
+      <span id="statusText">Prêt</span>
     </div>
   </div>
 
   <div class="header-right">
-    <div class="wpm-display" title="Words per minute">
+    <div class="wpm-display" title="Mots par minute">
       <span id="wpmValue">—</span>
-      <span class="wpm-label">WPM</span>
+      <span class="wpm-label">MPM</span>
     </div>
-    <div class="progress-display" title="Script progress">
-      <span id="progressValue">0%</span>
+    <div class="progress-display" title="Progression du script">
+      <span id="progressValue">0 %</span>
       <span>·</span>
       <span class="progress-eta" id="etaValue"></span>
     </div>
-    <button class="icon-btn" data-theme-toggle aria-label="Toggle theme">
+    <button class="icon-btn" data-theme-toggle aria-label="Changer le thème">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
     </button>
   </div>
@@ -65,14 +65,14 @@
       <div class="panel-header">
         <h2 class="panel-title">Script</h2>
         <div class="panel-actions">
-          <button class="text-btn" id="clearScriptBtn">Clear</button>
-          <button class="text-btn" id="sampleScriptBtn">Sample</button>
+          <button class="text-btn" id="clearScriptBtn">Effacer</button>
+          <button class="text-btn" id="sampleScriptBtn">Exemple</button>
         </div>
       </div>
       <textarea
         id="scriptInput"
         class="script-textarea"
-        placeholder="Paste or type your script here…"
+        placeholder="Collez ou tapez votre script ici…"
         spellcheck="true"
       ></textarea>
     </section>
@@ -80,53 +80,53 @@
     <!-- Controls -->
     <section class="panel controls-panel">
       <div class="panel-header">
-        <h2 class="panel-title">Controls</h2>
+        <h2 class="panel-title">Commandes</h2>
         <span id="engineIndicator" class="engine-indicator"></span>
       </div>
 
       <!-- Model loading bar -->
       <div id="modelProgress" class="model-progress">
-        <div class="model-progress-label">Loading Whisper AI model (French)…</div>
+        <div class="model-progress-label">Chargement du modèle Whisper AI (français)…</div>
         <div class="model-progress-track">
           <div id="modelProgressBar" class="model-progress-bar"></div>
         </div>
-        <div class="model-progress-hint">~150 MB · cached after first load</div>
+        <div class="model-progress-hint">~150 Mo · mis en cache après le premier chargement</div>
       </div>
 
       <!-- Start / Stop -->
       <div class="control-row">
         <button class="btn btn-accent" id="startBtn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
-          Start Speaking
+          Démarrer
         </button>
         <button class="btn btn-ghost" id="stopBtn" disabled>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-          Stop
+          Arrêter
         </button>
       </div>
 
       <!-- Options -->
       <div class="options-grid">
         <label class="option-label">
-          <span>Speaking pace (WPM)</span>
+          <span>Rythme (MPM)</span>
           <input type="range" id="wpmRange" min="80" max="180" step="5" value="120" class="range-input">
           <span id="wpmRangeVal" class="range-val">120</span>
         </label>
         <label class="option-label">
-          <span>Font size</span>
+          <span>Taille du texte</span>
           <input type="range" id="fontSizeRange" min="1.5" max="5" step="0.25" value="2.5" class="range-input">
           <span id="fontSizeVal" class="range-val">2.5rem</span>
         </label>
         <label class="option-label">
-          <span>Mirror mode</span>
+          <span>Mode miroir</span>
           <div class="toggle-wrap">
             <input type="checkbox" id="mirrorToggle" class="toggle-input">
             <span class="toggle-track"></span>
           </div>
         </label>
         <label class="option-label">
-          <span>Reset position</span>
-          <button class="text-btn" id="resetBtn">Reset</button>
+          <span>Réinitialiser la position</span>
+          <button class="text-btn" id="resetBtn">Réinitialiser</button>
         </label>
 
       </div>
@@ -135,12 +135,12 @@
     <!-- Live transcript -->
     <section class="panel transcript-panel">
       <div class="panel-header">
-        <h2 class="panel-title">Live Transcript</h2>
-        <button class="text-btn" id="clearTranscriptBtn">Clear</button>
+        <h2 class="panel-title">Transcription en direct</h2>
+        <button class="text-btn" id="clearTranscriptBtn">Effacer</button>
       </div>
       <div id="interimBox" class="interim-box"></div>
       <div id="transcriptBox" class="transcript-box">
-        <span class="transcript-placeholder">Transcript will appear here as you speak…</span>
+        <span class="transcript-placeholder">La transcription apparaîtra ici au fur et à mesure…</span>
       </div>
     </section>
 
@@ -156,13 +156,13 @@
       <div class="teleprompter-content" id="teleprompterContent">
         <div class="empty-state">
           <div class="empty-state-arrow">←</div>
-          <p class="empty-state-title">Your script lives here</p>
-          <p class="empty-state-sub">Paste it in the panel to the left,<br>then press <em>Start Speaking</em></p>
+          <p class="empty-state-title">Votre script s'affichera ici</p>
+          <p class="empty-state-sub">Collez-le dans le panneau de gauche,<br>puis appuyez sur <em>Démarrer</em></p>
         </div>
       </div>
     </div>
 
-    <button class="fullscreen-btn" id="fullscreenBtn" title="Toggle fullscreen">
+    <button class="fullscreen-btn" id="fullscreenBtn" title="Plein écran">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
         <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
@@ -176,14 +176,14 @@
 <footer class="app-footer">
   <span>&copy; 2026 Lars Baunwall</span>
   <span class="footer-sep">·</span>
-    <a href="https://github.com/bidouilles/promptme-ai" target="_blank" rel="noopener noreferrer" class="footer-github" title="View on GitHub">
+    <a href="https://github.com/bidouilles/promptme-ai" target="_blank" rel="noopener noreferrer" class="footer-github" title="Voir sur GitHub">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.477 2 2 6.484 2 12.021c0 4.428 2.865 8.184 6.839 9.504.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.944.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.741 0 .267.18.578.688.48C19.138 20.2 22 16.447 22 12.021 22 6.484 17.523 2 12 2z"/></svg>
     GitHub
   </a>
   <span class="footer-sep">·</span>
-  <span>Powered by the Whisper AI voice model (French), running entirely in your browser</span>
+  <span>Propulsé par le modèle vocal Whisper AI (français), entièrement dans votre navigateur</span>
   <span class="footer-sep">·</span>
-  <a href="#" id="copyMetricsBtn" class="footer-metrics" title="Copy metrics log">[timing metrics]</a>
+  <a href="#" id="copyMetricsBtn" class="footer-metrics" title="Copier le journal des métriques">[métriques]</a>
 </footer>
 <script type="module" src="app.js"></script>
 </body>

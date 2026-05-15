@@ -40,7 +40,7 @@ async function supportsWebGPU() {
 
 const device = (await supportsWebGPU()) ? 'webgpu' : 'wasm';
 self.postMessage({ type: 'info', message: `Device: ${device}` });
-self.postMessage({ type: 'status', status: 'loading', message: 'Loading speech model…' });
+self.postMessage({ type: 'status', status: 'loading', message: 'Chargement du modèle vocal…' });
 
 const DTYPE_CONFIGS = {
   webgpu: { encoder_model: 'fp32', decoder_model_merged: 'q4' },
@@ -69,13 +69,13 @@ try {
     },
   );
 } catch (err) {
-  self.postMessage({ type: 'error', message: `Failed to load Whisper: ${err.message}` });
+  self.postMessage({ type: 'error', message: `Échec du chargement de Whisper : ${err.message}` });
   throw err;
 }
 
 // Warm up — compile shaders / JIT with a silent buffer
 await transcriber(new Float32Array(16000), ASR_OPTIONS);
-self.postMessage({ type: 'status', status: 'ready', message: 'Ready' });
+self.postMessage({ type: 'status', status: 'ready', message: 'Prêt' });
 
 // ── Smart partial handling ────────────────────────────────────────────────────
 // Partials arrive while VAD accumulates audio. If inference is slower than
@@ -87,12 +87,12 @@ let _latestPartial = null;   // newest partial buffer, replaces any pending one
 
 async function transcribeAndEmit(buffer, isFinal, vadEmitTs, audioMs) {
   const txStartTs = performance.now();
-  self.postMessage({ type: 'status', status: 'transcribing', message: 'Transcribing…' });
+  self.postMessage({ type: 'status', status: 'transcribing', message: 'Transcription…' });
   const { text } = await transcriber(buffer, ASR_OPTIONS);
   const txEndTs = performance.now();
   const cleaned = text.trim();
   if (cleaned) self.postMessage({ type: 'transcript', text: cleaned, isFinal, vadEmitTs, audioMs, txStartTs, txEndTs, txDurMs: Math.round(txEndTs - txStartTs) });
-  self.postMessage({ type: 'status', status: 'recording', message: 'Listening…' });
+  self.postMessage({ type: 'status', status: 'recording', message: 'À l\'écoute…' });
 }
 
 // ── Main message handler ──────────────────────────────────────────────────────

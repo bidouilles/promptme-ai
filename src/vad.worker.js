@@ -58,11 +58,11 @@ try {
     config: { model_type: 'custom' }, dtype: 'fp32',
   });
 } catch (err) {
-  self.postMessage({ type: 'error', message: `Failed to load VAD: ${err.message}` });
+  self.postMessage({ type: 'error', message: `Échec du chargement du VAD : ${err.message}` });
   throw err;
 }
 
-self.postMessage({ type: 'status', status: 'vad_ready', message: 'VAD ready' });
+self.postMessage({ type: 'status', status: 'vad_ready', message: 'VAD prêt' });
 
 // ── VAD state ────────────────────────────────────────────────────────────────
 const sr      = new Tensor('int64', [SAMPLE_RATE], []);
@@ -177,7 +177,7 @@ self.onmessage = async (event) => {
   }
 
   if (isSpeech) {
-    if (!isRecording) self.postMessage({ type: 'status', status: 'recording', message: 'Listening…' });
+    if (!isRecording) self.postMessage({ type: 'status', status: 'recording', message: 'À l\'écoute…' });
     isRecording = true;
     postSpeechSamples = 0;
     maybeEmitPartial();
