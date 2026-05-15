@@ -440,6 +440,13 @@ const state = {
   lastSpeechTime: 0,
 
   settings: { fontSize: 2.5, mirror: false },
+  // Speech engine — either the browser's native Web Speech API (fast, uses
+  // Apple Speech on iOS / Safari, may route through Apple servers) or our
+  // bundled Whisper-in-WASM/WebGPU pipeline (slower but fully on-device,
+  // works offline). Picked at boot from localStorage + feature detection.
+  engine: 'whisper',  // 'web-speech' | 'whisper'
+  recognition: null,  // SpeechRecognition instance when engine === 'web-speech'
+  _wsRestart: false,  // true while we want the recognition to auto-restart after onend
   vadWorker: null,    // VAD worker — Silero, runs unblocked at frame rate
   txWorker:  null,    // Transcription worker — Whisper, runs concurrently
   audioContext: null,
@@ -450,6 +457,14 @@ const state = {
   modelLoading: false,
   _startPending: false,
 };
+
+// Web Speech API is exposed by Safari (iOS + macOS) and Chromium browsers.
+// On iOS it is wired to Apple's native dictation engine — fast, no model
+// download. On Firefox it does not exist and we always fall back to Whisper.
+const SpeechRecognitionCtor = (typeof window !== 'undefined')
+  ? (window.SpeechRecognition || window.webkitSpeechRecognition)
+  : null;
+const HAS_WEB_SPEECH = !!SpeechRecognitionCtor;
 
 // ═══════════════════════════════════════════════════════
 // ALGORITHM CONSTANTS
@@ -574,6 +589,8 @@ const dom = {
   wpmRange:              $('wpmRange'),
   wpmRangeVal:           $('wpmRangeVal'),
   mirrorToggle:          $('mirrorToggle'),
+  engineToggle:          $('engineToggle'),
+  engineToggleWrap:      $('engineToggleWrap'),
   resetBtn:              $('resetBtn'),
   copyMetricsBtn:        $('copyMetricsBtn'),
   fullscreenBtn:         $('fullscreenBtn'),
@@ -1507,15 +1524,19 @@ function initWorker() {
         setStatus('loading', message || 'Chargement du modèle IA…');
         state.modelLoading = true; state.modelReady = false;
       } else if (status === 'ready') {
-        setStatus('idle', 'Modèle prêt');
         state.modelLoading = false; state.modelReady = true;
-        if (dom.modelProgress) dom.modelProgress.classList.add('hidden');
-        if (dom.engineIndicator) dom.engineIndicator.textContent = 'Moteur : Whisper AI (sur l\'appareil)';
-        if (state._startPending) { state._startPending = false; startAudio(); }
+        // Ignore Whisper-side status changes if the user has since switched
+        // to Web Speech — otherwise we'd overwrite the Apple Speech label.
+        if (state.engine === 'whisper') {
+          setStatus('idle', 'Modèle prêt');
+          if (dom.modelProgress) dom.modelProgress.classList.add('hidden');
+          applyEngineIndicator();
+          if (state._startPending) { state._startPending = false; startAudio(); }
+        }
       } else if (status === 'recording') {
-        setStatus('recording', 'À l\'écoute…');
+        if (state.engine === 'whisper') setStatus('recording', 'À l\'écoute…');
       } else if (status === 'transcribing') {
-        setStatus('loading', 'Transcription…');
+        if (state.engine === 'whisper') setStatus('loading', 'Transcription…');
       }
     }
 
@@ -1545,7 +1566,7 @@ function initWorker() {
 
     if (type === 'info') {
       console.log('[Worker]', message);
-      if (dom.engineIndicator && message.includes('Device:')) {
+      if (state.engine === 'whisper' && dom.engineIndicator && message.includes('Device:')) {
         dom.engineIndicator.textContent = `Moteur : Whisper AI (${message.includes('webgpu') ? 'WebGPU' : 'WASM'})`;
       }
     }
@@ -1582,6 +1603,151 @@ function initWorker() {
   state.txWorker = new Worker('./transcribe.worker.js', { type: 'module' });
   state.txWorker.onmessage = handleMessage;
   state.txWorker.onerror   = handleError;
+}
+
+// ═══════════════════════════════════════════════════════
+// WEB SPEECH ENGINE (Apple Speech on Safari, Google on Chrome)
+// ═══════════════════════════════════════════════════════
+//
+// Used when state.engine === 'web-speech'. Bypasses the Whisper workers
+// entirely — Safari/Chromium handle audio capture + ASR natively.
+// Designed to drop into the same appendTranscript() + processTranscript()
+// path the Whisper worker feeds, so the matcher/scroll logic is unchanged.
+
+function initWebSpeech() {
+  if (state.recognition) return;
+  const r = new SpeechRecognitionCtor();
+  r.lang            = 'fr-FR';
+  r.continuous      = true;
+  r.interimResults  = true;
+  r.maxAlternatives = 1;
+
+  r.onresult = (e) => {
+    // Web Speech accumulates results in e.results. New entries start at
+    // e.resultIndex. Each result is either final (committed) or interim
+    // (may still be revised). We feed both to the matcher with the right
+    // isFinal flag; the matcher's locality penalty + phonetic dedup
+    // absorb the inevitable re-feeding of the same words.
+    let interim = '', final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) final += t + ' '; else interim += t + ' ';
+    }
+    const txt = (final || interim).trim();
+    if (!txt) return;
+    const isFinal = !!final.trim();
+    _mlog('transcript_arrive', { isFinal, text: txt, source: 'web-speech' });
+    appendTranscript(txt, !isFinal);
+    processTranscript(txt, isFinal);
+    if (!state.sessionStartTime) {
+      state.sessionStartTime = Date.now();
+      state.lastAdvanceTime  = Date.now();
+    }
+  };
+
+  r.onerror = (e) => {
+    // 'no-speech' fires on silence and is harmless; the onend handler will
+    // restart. 'aborted' is fired when we call stop() ourselves.
+    if (e.error === 'no-speech' || e.error === 'aborted') return;
+    console.error('[WebSpeech] error:', e.error);
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      setStatus('idle', 'Permission micro refusée');
+      state._wsRestart = false;
+      updateButtons(false);
+    } else if (e.error === 'network') {
+      setStatus('idle', 'Erreur réseau (reconnaissance vocale Apple)');
+    }
+  };
+
+  r.onend = () => {
+    // iOS auto-stops the recognizer every ~60 s of silence and on backgrounding.
+    // If the user has not pressed Stop, transparently restart.
+    if (state._wsRestart) {
+      try { r.start(); } catch (err) { console.warn('[WebSpeech] restart failed:', err); }
+    } else {
+      state.isRecording = false;
+    }
+  };
+
+  state.recognition = r;
+}
+
+function startWebSpeech() {
+  if (state.isRecording) return;
+  initWebSpeech();
+  state._wsRestart = true;
+  try {
+    state.recognition.start();
+  } catch (err) {
+    // 'InvalidStateError' fires if already started; ignore.
+    if (err.name !== 'InvalidStateError') {
+      console.error('[WebSpeech] start failed:', err);
+      setStatus('idle', `Erreur micro : ${err.message}`);
+      updateButtons(false);
+      return;
+    }
+  }
+  state.isRecording = true;
+  state.lastAdvanceTime = Date.now();
+  if (!state.sessionStartTime) state.sessionStartTime = Date.now();
+  setStatus('recording', 'À l\'écoute…');
+  updateButtons(true);
+  startCreep();
+  scheduleStallNudge();
+}
+
+function stopWebSpeech() {
+  state._wsRestart = false;
+  stopCreep();
+  if (state.recognition) {
+    try { state.recognition.stop(); } catch {}
+  }
+  if (state.stallNudgeTimer) { clearTimeout(state.stallNudgeTimer); state.stallNudgeTimer = null; }
+  state.isRecording = false;
+  if (dom.interimBox) dom.interimBox.textContent = '';
+  setStatus('stopped', 'Arrêté');
+  updateButtons(false);
+}
+
+// ═══════════════════════════════════════════════════════
+// ENGINE SWITCHING
+// ═══════════════════════════════════════════════════════
+
+function applyEngineIndicator() {
+  if (!dom.engineIndicator) return;
+  if (state.engine === 'web-speech') {
+    dom.engineIndicator.textContent = 'Moteur : Apple Speech (peut transiter par les serveurs Apple)';
+  } else if (state.modelReady) {
+    dom.engineIndicator.textContent = 'Moteur : Whisper AI (sur l\'appareil)';
+  } else {
+    dom.engineIndicator.textContent = 'Moteur : Whisper AI (chargement…)';
+  }
+}
+
+function setEngine(next) {
+  if (next === state.engine) return;
+  const wasRecording = state.isRecording;
+  if (wasRecording) {
+    // Tear down the current path so we can switch cleanly. We do NOT
+    // auto-restart on the new engine — let the user press Start again,
+    // which makes intent explicit and avoids surprise mic grabs.
+    if (state.engine === 'web-speech') stopWebSpeech();
+    else stopAudio();
+  }
+  state.engine = next;
+  try { localStorage.setItem('promptme.engine', next); } catch {}
+
+  if (next === 'whisper') {
+    if (dom.modelProgress) dom.modelProgress.classList.remove('hidden');
+    // Lazy-init Whisper workers if not already done.
+    if (!state.vadWorker) initWorker();
+    state.modelReady = false;
+  } else {
+    // web-speech: no model to load
+    if (dom.modelProgress) dom.modelProgress.classList.add('hidden');
+    state.modelReady = true;
+  }
+  applyEngineIndicator();
 }
 
 async function startAudio() {
@@ -1658,16 +1824,23 @@ function stopAudio() {
 
 function startRecording() {
   if (!state.words.length) { dom.scriptInput.value = SAMPLE_SCRIPT; renderScript(); }
+  if (!_metricsT0) _metricsT0 = performance.now();
+  _mlog('start', { wordCount: state.wordCount, wpmSlider: dom.wpmRange ? Number(dom.wpmRange.value) : CFG.WPM_DEFAULT, engine: state.engine });
+  if (state.engine === 'web-speech') {
+    startWebSpeech();
+    return;
+  }
+  // Whisper path: lazy-init workers, wait for model ready, then start audio
   if (!state.vadWorker) initWorker();
   if (!state.modelReady) { state._startPending = true; setStatus('loading','Chargement du modèle IA…'); updateButtons(true); return; }
-  if (!_metricsT0) _metricsT0 = performance.now();
-  _mlog('start', { wordCount: state.wordCount, wpmSlider: dom.wpmRange ? Number(dom.wpmRange.value) : CFG.WPM_DEFAULT });
   startAudio();
 }
 
 function stopRecording() {
   _mlog('stop', { pos: state.currentWordIndex, creepTarget: state.creepTargetIndex, anchorWpm: Math.round(state.anchorWpm) });
-  state._startPending = false; stopAudio();
+  state._startPending = false;
+  if (state.engine === 'web-speech') stopWebSpeech();
+  else stopAudio();
 }
 
 function updateButtons(active) {
@@ -1757,6 +1930,12 @@ function wireEvents() {
     dom.wpmRangeVal.textContent = e.target.value;
   });
   dom.mirrorToggle?.addEventListener('change', e => applyMirror(e.target.checked));
+
+  // Engine toggle — only effective when Web Speech is available on this
+  // browser. Toggle ON = force offline Whisper, OFF = native Apple Speech.
+  dom.engineToggle?.addEventListener('change', e => {
+    setEngine(e.target.checked ? 'whisper' : 'web-speech');
+  });
   dom.fullscreenBtn?.addEventListener('click', toggleFullscreen);
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && document.body.classList.contains('fullscreen-mode')) toggleFullscreen();
@@ -1769,14 +1948,45 @@ function wireEvents() {
 // ═══════════════════════════════════════════════════════
 
 function checkEngineAvailability() {
-  if (typeof Worker === 'undefined' || (typeof AudioContext === 'undefined' && typeof webkitAudioContext === 'undefined')) {
+  // Worker + AudioContext are only required for the Whisper path. If neither
+  // they nor Web Speech are available, no engine can run.
+  const hasWhisperRuntime = (typeof Worker !== 'undefined') &&
+                            (typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined');
+  if (!HAS_WEB_SPEECH && !hasWhisperRuntime) {
     setStatus('idle','Navigateur non pris en charge');
     if (dom.startBtn) dom.startBtn.disabled = true;
     if (dom.engineIndicator) { dom.engineIndicator.textContent = 'Utilisez un navigateur récent (Chrome/Safari/Firefox)'; dom.engineIndicator.style.color = 'var(--color-error)'; }
     return false;
   }
-  if (dom.engineIndicator) dom.engineIndicator.textContent = 'Moteur : Whisper AI (chargement…)';
+  applyEngineIndicator();
   return true;
+}
+
+function pickInitialEngine() {
+  // localStorage override wins when present, otherwise default to Web Speech
+  // if the browser supports it (typically iPad/Safari + Chromium). Fall back
+  // to Whisper when Web Speech is missing (Firefox) or the user pinned it.
+  let saved = null;
+  try { saved = localStorage.getItem('promptme.engine'); } catch {}
+  if (saved === 'whisper' || saved === 'web-speech') {
+    state.engine = HAS_WEB_SPEECH ? saved : 'whisper';
+  } else {
+    state.engine = HAS_WEB_SPEECH ? 'web-speech' : 'whisper';
+  }
+
+  // Reveal the toggle only when Web Speech is actually available — there is
+  // nothing to switch to on Firefox.
+  if (HAS_WEB_SPEECH && dom.engineToggleWrap) {
+    dom.engineToggleWrap.hidden = false;
+    if (dom.engineToggle) dom.engineToggle.checked = state.engine === 'whisper';
+  }
+
+  // Whisper engine needs no immediate change here — initWorker() will run
+  // below. Web Speech engine: hide the model-progress UI, mark ready.
+  if (state.engine === 'web-speech') {
+    if (dom.modelProgress) dom.modelProgress.classList.add('hidden');
+    state.modelReady = true;
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1786,6 +1996,7 @@ function checkEngineAvailability() {
 function init() {
   initTheme();
   wireEvents();
+  pickInitialEngine();
   checkEngineAvailability();
   dom.scriptInput.value = SAMPLE_SCRIPT;
   renderScript();
@@ -1797,7 +2008,10 @@ function init() {
   dom.teleprompterContent.appendChild(pill);
   dom.highlightPill = pill;
   updateButtons(false);
-  initWorker();
+  // Only pre-load the Whisper workers when the active engine actually needs
+  // them. Saves the 150 MB download on iPad / Safari where Web Speech is
+  // the default. Switching the toggle later lazy-inits them.
+  if (state.engine === 'whisper') initWorker();
 }
 
 init();
